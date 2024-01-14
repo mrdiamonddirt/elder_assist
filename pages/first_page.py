@@ -17,7 +17,7 @@ st.title("Simple example to list inputs")
 
 with st.form(key="data-inputs"):
   mtotal = st.number_input(
-      "Select number of inputs to view in a table:", min_value=5, max_value=100)
+      "Select number of inputs to view in a table:", min_value=1, max_value=100)
   submitted = st.form_submit_button('Submit')
 
 if submitted:
