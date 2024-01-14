@@ -14,7 +14,7 @@ auth = ClarifaiAuthHelper.from_streamlit(st)
 stub = create_stub(auth)
 userDataObject = auth.get_user_app_id_proto()
 
-workflowid = assistant_flow
+workflowid = "assistant_flow"
 
 
 st.title("What Can i Help You With Today?")
