@@ -1,57 +1,90 @@
 import streamlit as st
+import base64
+import pyaudio
+import wave
 from clarifai.client.auth import create_stub
 from clarifai.client.auth.helper import ClarifaiAuthHelper
 from clarifai.client.user import User
 from clarifai.modules.css import ClarifaiStreamlitCSS
+from clarifai_grpc.channel.clarifai_channel import ClarifaiChannel
+from clarifai_grpc.grpc.api import resources_pb2, service_pb2, service_pb2_grpc
+from clarifai_grpc.grpc.api.status import status_code_pb2
 from google.protobuf import json_format, timestamp_pb2
-import datetime
+import io
+
 
 st.set_page_config(layout="wide")
 ClarifaiStreamlitCSS.insert_default_css(st)
 
-# This must be within the display() function.
-auth = ClarifaiAuthHelper.from_streamlit(st)
-stub = create_stub(auth)
-userDataObject = auth.get_user_app_id_proto()
+# APP Variables
+USER_ID = 'r0wd0g'
+# Your PAT (Personal Access Token) can be found in the portal under Authentification
+PAT = '7621bc9789dd4fe18f4ceb1d29dc4f54'
+APP_ID = 'my-first-application-4uq69s'
+# Change these to make your own predictions
+WORKFLOW_ID = 'assistant_flow'
+AUDIO_URL = 'https://samples.clarifai.com/negative_sentence_1.wav'
 
-workflowid = "assistant_flow"
+# Create a gRPC stub
+channel = ClarifaiChannel.get_grpc_channel()
+stub = service_pb2_grpc.V2Stub(channel)
 
+metadata = (('authorization', f'Key {PAT}'),)
 
-st.title("What Can i Help You With Today?")
+userDataObject = resources_pb2.UserAppIDSet(user_id=USER_ID, app_id=APP_ID) # The userDataObject is required when using a PAT
 
-app = stub.GetApp(service_pb2.GetAppRequest(user_app_id=userDataObject))
-
-# send audio to workflow
-
-workflow = stub.GetWorkflow(service_pb2.GetWorkflowRequest(workflow_id=workflowid))
-
-workflow_input = workflow.workflow.input_template
-workflow_input.input_type = "wav"
-workflow_input.input_config.audio_config.language_code = "en-US"
-workflow_input.input_config.audio_config.sample_rate_hertz = 44100
-
-# add audio file
-audio_file = st.file_uploader("Upload a file", type=["wav"])
-
-# send audio to workflow
-send_audio = stub.PostWorkflowResults(
+post_workflow_results_response = stub.PostWorkflowResults(
     service_pb2.PostWorkflowResultsRequest(
-        workflow_id=workflowid,
+        workflow_id=WORKFLOW_ID,
         inputs=[
             resources_pb2.Input(
                 data=resources_pb2.Data(
                     audio=resources_pb2.Audio(
-                        content=audio_file.read(),
-                        audio_config=workflow_input.input_config.audio_config,
+                        url=AUDIO_URL
                     )
                 )
             )
-        ],
-    )
+        ]
+    ),
+    metadata=metadata
 )
 
-# get response from assistant
-# display response
-response = send_audio.results[0].outputs[0].data.concepts[0].name
+if post_workflow_results_response.status.code != status_code_pb2.SUCCESS:
+    print(post_workflow_results_response.status)
+    raise Exception("Post workflow results failed, status: " + post_workflow_results_response.status.description)
 
-st.write(response)
+# We'll get one WorkflowResult for each input we used above. Because of one input, we have here one WorkflowResult
+results = post_workflow_results_response.results[0]
+
+# Each model we have in the workflow will produce its output
+for output in results.outputs:    
+    model = output.model    
+    print("Output for the model: `%s`" % model.id)   
+    for concept in output.data.concepts:        
+        print("\t%s %.2f" % (concept.name, concept.value)) 
+    print(output.data.text.raw)
+
+    if output.data.audio:
+        # convert the base64 string to a buffer
+        buffer = io.BytesIO(base64.b64decode(output.data.audio.base64))
+        
+        # create a temporary WAV file
+        with wave.open('output.wav', 'wb') as wave_file:
+            wave_file.setnchannels(1)
+            wave_file.setsampwidth(2)
+            wave_file.setframerate(24000)
+            wave_file.writeframes(buffer.getvalue())
+
+        # play the audio using PyAudio
+        p = pyaudio.PyAudio()
+        stream = p.open(format=p.get_format_from_width(wave_file.getsampwidth()),
+                        channels=wave_file.getnchannels(),
+                        rate=wave_file.getframerate(),
+                        output=True)
+        stream.write(buffer.getvalue())
+        stream.close()
+        p.terminate()
+
+
+# Uncomment this line to print the full Response JSON
+#print(results) 
